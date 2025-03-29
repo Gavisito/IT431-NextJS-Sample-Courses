@@ -1,30 +1,6 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { Course } from "@/types/course";
-
-// Define the path to the JSON file
-const dataFilePath = path.join(process.cwd(), "data", "courses.json");
-
-// Helper function to read courses
-const readCourses = (): Course[] => {
-  try {
-    const jsonData = fs.readFileSync(dataFilePath, "utf-8");
-    return JSON.parse(jsonData) as Course[];
-  } catch (error) {
-    console.error("Error reading courses file:", error);
-    return [];
-  }
-};
-
-// Helper function to write courses
-const writeCourses = (courses: Course[]) => {
-  try {
-    fs.writeFileSync(dataFilePath, JSON.stringify(courses, null, 2), "utf-8");
-  } catch (error) {
-    console.error("Error writing to courses file:", error);
-  }
-};
+import clientPromise from "@/lib/mongodb";
 
 // GET: Retrieve a course by ID
 export async function GET(
@@ -42,13 +18,19 @@ export async function GET(
       );
     }
 
-    const courses = readCourses();
-    const course = courses.find((c) => c.id === courseId);
+    const client = await clientPromise;
+    const db = client.db("coursesDb");
 
-    if (!course) {
-      return NextResponse.json({ error: "Course not found." }, { status: 404 });
-    }
+    //const course = courses.find((c) => c.id === courseId);
+    // only find one entry with a specified id
+    const course = await db
+    .collection("courses")
+    .findOne({id:courseId}); 
 
+    // if (!course) {
+    //   return NextResponse.json({ error: "Course not found." }, { status: 404 });
+    // }
+    
     return NextResponse.json(course, { status: 200 });
   } catch (error) {
     console.error("Error retrieving course:", error);
@@ -74,19 +56,22 @@ export async function PUT(
       );
     }
 
-    const updatedCourse: Partial<Course> = await request.json();
-    const courses = readCourses();
-    const index = courses.findIndex((c) => c.id === courseId);
+    const userRequest: Partial<Course> = await request.json();
+    const client = await clientPromise;
+    const db = client.db("coursesDb");
 
-    if (index === -1) {
-      return NextResponse.json({ error: "Course not found." }, { status: 404 });
-    }
+    const course = await db.collection("courses").findOne({id: courseId});
+  
+    //makes an object to copy and overwrite fields that are both there such as description in both objects. "any" remove type requirement so null can exist
+    const updateInfo: any = {...course, ...userRequest};
 
-    courses[index] = { ...courses[index], ...updatedCourse, id: courseId };
+    //dot notation to remove the _id from mongodb, otherwise there will be an error of mutating the immutable when updating \(+>+)/
+    delete updateInfo._id;
 
-    writeCourses(courses);
+    //this updates only the field entered by the user
+    const courseUpdate = await db.collection("courses").updateOne({ id: courseId}, { $set: updateInfo})
 
-    return NextResponse.json(courses[index], { status: 200 });
+    return NextResponse.json(courseUpdate, { status: 200 });
   } catch (error) {
     console.error("Error updating course:", error);
     return NextResponse.json(
@@ -111,15 +96,10 @@ export async function DELETE(
       );
     }
 
-    let courses = readCourses();
-    const initialLength = courses.length;
-    courses = courses.filter((c) => c.id !== courseId);
+    const client = await clientPromise;
+    const db = client.db("coursesDb");
 
-    if (courses.length === initialLength) {
-      return NextResponse.json({ error: "Course not found." }, { status: 404 });
-    }
-
-    writeCourses(courses);
+    const deleteCourse = db.collection("courses").deleteOne({id: courseId});
 
     return NextResponse.json(
       { message: `Course with ID ${courseId} deleted.` },
@@ -133,3 +113,4 @@ export async function DELETE(
     );
   }
 }
+
